@@ -1,15 +1,24 @@
-# Quiz Interactif - Ollama & Streamlit
+# 🧠 Quiz Ollama - Auto-Generate Quiz Questions from Documents
 
-Une application web de génération automatique de questions de compréhension basée sur vos documents (PDF ou DOCX). Utilisez cette application pour tester votre compréhension de n'importe quel document, avec correction intelligente de vos réponses.
+![Python](https://img.shields.io/badge/Python-3.10+-blue)
+![Streamlit](https://img.shields.io/badge/Streamlit-Latest-red)
+![Ollama](https://img.shields.io/badge/Ollama-Local%20LLM-green)
+![LangChain](https://img.shields.io/badge/LangChain-Latest-orange)
+![License](https://img.shields.io/badge/License-MIT-yellow)
 
-## Fonctionnalités
+**Interactive quiz generator using Ollama, Streamlit, and Mistral LLM.**  
+Convert PDF/DOCX documents into AI-powered comprehension quizzes with intelligent correction. 100% local, no cloud required.
 
-- ✅ **Upload de documents** : Chargez des fichiers PDF ou DOCX
-- ✅ **Génération automatique de questions** : Questions créées dynamiquement basées sur le contenu
-- ✅ **Correction intelligente** : Les réponses sont évaluées avec score et feedback détaillé
-- ✅ **Pas de répétition** : Chaque question n'est posée qu'une seule fois par session
-- ✅ **Performance optimisée** : Utilise des extraits aléatoires du document pour une génération rapide
-- ✅ **Interface moderne** : Design réactif avec animations et thème personnalisé
+## ✨ Fonctionnalités (Features)
+
+- ⚡ **Ultra-fast** (~2-3s per question) - Optimized for speed
+- 🔒 **100% Local** - No cloud API, no internet required, run offline
+- 📄 **Multi-format Support** - PDF and DOCX documents
+- 🤖 **AI-Powered** - Uses Ollama with Mistral LLM model
+- 🎓 **Intelligent Questions** - Auto-filters structural questions, focuses on comprehension
+- 📊 **Smart Scoring** - Evaluates answers with score (0-10) and detailed feedback
+- 🚫 **No Repetition** - Each question asked only once per session
+- 🎨 **Modern UI** - Streamlit with custom theme, animations, glass-morphism design
 
 ## Prérequis
 
@@ -70,6 +79,25 @@ L'application s'ouvre automatiquement dans votre navigateur (généralement à `
 3. **Répondre** : Tapez votre réponse dans le champ texte
 4. **Soumettre et recevoir une correction** : Cliquez sur "Soumettre la réponse" pour obtenir un score et un feedback détaillé
 5. **Continuer** : Cliquez sur "Question suivante" pour une nouvelle question
+
+## 🎯 Use Cases & Keywords
+
+### Cas d'usage (Use Cases)
+- 📚 **Education** - Teachers generating quiz from course materials
+- 🏫 **Self-Study** - Students testing comprehension on any document
+- 📖 **Document Analysis** - Extracting key concepts from technical docs
+- 🔍 **Content Review** - QA teams validating documentation quality
+- 🎓 **Corporate Training** - Employee onboarding with auto-generated assessments
+
+### Technologies & Keywords
+- **AI/ML**: Local LLM, Ollama, Mistral, generative-ai, machine-learning
+- **Document Processing**: PDF extraction, DOCX parsing, text splitting
+- **Web Framework**: Streamlit, Python, Streamlit-apps
+- **NLP/LangChain**: LangChain, text-splitters, prompt-engineering
+- **Open Source**: MIT License, community-driven
+
+### Related Topics
+`quiz` • `ollama` • `streamlit` • `pdf` • `docx` • `llm` • `mistral` • `ai` • `python` • `machine-learning` • `generative-ai` • `document-processing` • `local-llm` • `education-tech`
 
 ## Architecture
 
