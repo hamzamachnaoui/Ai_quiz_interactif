@@ -16,7 +16,7 @@ et ce projet suit [Semantic Versioning](https://semver.org/lang/fr/).
 - Prévention de la répétition de questions au sein d'une même session
 - Support du caching Streamlit pour optimiser les performances
 - Mise en page réactive avec animations CSS
-- Intégration locale avec Ollama et le modèle Mistral
+- Intégration avec une API de modèle de langage pour la génération et la correction
 - Documentation complète et guide de contribution
 
 ### Fonctionnalités
@@ -27,7 +27,7 @@ et ce projet suit [Semantic Versioning](https://semver.org/lang/fr/).
 - ✅ Interface intuitive et moderne
 - ✅ Performance optimisée (< 5s par question)
 - ✅ Questions uniques par session
-- ✅ Pas de requêtes externes (100% local)
+- ✅ Génération assistée par modèle de langage avec configuration par API
 
 ## Versions futures envisagées
 
@@ -35,7 +35,7 @@ et ce projet suit [Semantic Versioning](https://semver.org/lang/fr/).
 - [ ] Support de formats additionnels (TXT, EPUB)
 - [ ] Export des sessions en PDF ou CSV
 - [ ] Historique des performances
-- [ ] Sélection du modèle Ollama via UI
+- [ ] Sélection du modèle IA via UI
 - [ ] Ajustement de la difficulté des questions
 
 ### [2.0.0] - Planifié

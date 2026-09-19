@@ -2,18 +2,24 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import random
 import re
 from io import BytesIO
 from typing import Any
 
 import streamlit as st
-from langchain_ollama import ChatOllama
+from dotenv import load_dotenv
+from langchain_groq import ChatGroq
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
 from docx import Document
 
-MODEL_NAME = "mistral"
+# Charger les variables d'environnement
+load_dotenv()
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+MODEL_NAME = os.getenv("GROQ_MODEL", "mixtral-8x7b-32768")
 MAX_CONTEXT_CHUNKS = 2
 
 
@@ -29,14 +35,19 @@ Reponds uniquement en JSON valide avec ce schema :
   "explanation": "..."
 }}
 
-Contraintes :
-- La question doit pouvoir etre resolue uniquement avec le contexte.
+Contraintes CRITIQUES :
+- La question doit porter UNIQUEMENT sur le contenu pédagogique : concepts, définitions, étapes, règles, comparaisons, exemples.
+- INTERDICTION ABSOLUE :
+  * Questions sur la structure du document (chapitre, section, page, titre)
+  * Questions sur les métadonnées (auteur, institution, droits, réservation, copyright)
+  * Questions sur l'organisation (énumérer, lister, combien de)
+  * Questions sur les droits ou l'utilisation (réservée à, institution, formation initiale)
+  * Questions vagues ou sans réponse claire dans le contexte
+
+- La question doit pouvoir etre resolue uniquement avec le contexte fourni.
 - La reponse attendue doit etre concise mais exacte.
-- L'explication doit justifier clairement la bonne reponse.
-- La question doit porter sur le fond du contenu, pas sur la structure du document.
-- Interdiction de poser une question sur un numero de chapitre, une page, une section, un titre, un nom de fichier ou l'organisation du document.
-- Evite les formulations vagues comme "dans le chapitre", "dans la section" ou "dans le document".
-- Prefere une question sur un concept, une definition, une etape, une regle, une comparaison ou un exemple utile pour l'apprentissage.
+- L'explication doit justifier clairement la bonne réponse.
+- Préfère une question sur un concept, une définition, une étape, une règle importante, une comparaison utile ou un exemple pédagogique.
 """
 
 
@@ -66,13 +77,48 @@ Contraintes :
 
 
 @st.cache_resource
-def get_llm() -> ChatOllama:
-    return ChatOllama(model=MODEL_NAME, temperature=0.2)
+def get_llm() -> ChatGroq:
+    if not GROQ_API_KEY:
+        st.error("❌ Clé API non configurée. Veuillez créer un fichier .env")
+        st.stop()
+    return ChatGroq(model=MODEL_NAME, temperature=0.2, api_key=GROQ_API_KEY)
 
 
 @st.cache_resource
-def get_json_llm() -> ChatOllama:
-    return ChatOllama(model=MODEL_NAME, temperature=0.1, format="json")
+def get_json_llm() -> ChatGroq:
+    if not GROQ_API_KEY:
+        st.error("❌ Clé API non configurée. Veuillez créer un fichier .env")
+        st.stop()
+    return ChatGroq(model=MODEL_NAME, temperature=0.1, api_key=GROQ_API_KEY)
+
+
+@st.cache_resource
+def get_question_llm() -> ChatGroq:
+    if not GROQ_API_KEY:
+        st.error("❌ Clé API non configurée. Veuillez créer un fichier .env")
+        st.stop()
+    return ChatGroq(model=MODEL_NAME, temperature=0.35, api_key=GROQ_API_KEY)
+
+
+def is_focus_text_usable(text: str) -> bool:
+    normalized = text.casefold()
+    if len(normalized.split()) < 80:
+        return False
+
+    banned_markers = [
+        "copyright",
+        "tous droits réservés",
+        "droits réservés",
+        "reproduction",
+        "formation initiale",
+        "institution",
+        "publié par",
+        "édité par",
+        "sommaire",
+        "table des matières",
+    ]
+    matches = sum(marker in normalized for marker in banned_markers)
+    return matches < 2
 
 
 @st.cache_data(show_spinner=False, max_entries=8)
@@ -92,7 +138,15 @@ def extract_focus_text(file_name: str, file_bytes: bytes) -> tuple[str, str]:
         if not non_empty_pages:
             return "", "Aucune page exploitable"
 
-        page_index, text = random.choice(non_empty_pages)
+        usable_pages = [
+            (page_index, text)
+            for page_index, text in non_empty_pages
+            if is_focus_text_usable(text)
+        ]
+
+        candidate_pages = usable_pages or non_empty_pages
+
+        page_index, text = random.choice(candidate_pages)
         return text, f"Page aléatoire sélectionnée: {page_index + 1}/{len(reader.pages)}"
 
     if lower_name.endswith(".docx"):
@@ -104,9 +158,17 @@ def extract_focus_text(file_name: str, file_bytes: bytes) -> tuple[str, str]:
 
         window_size = min(8, len(non_empty_paragraphs))
         max_start = max(0, len(non_empty_paragraphs) - window_size)
-        start_index = random.randint(0, max_start) if max_start else 0
-        excerpt = "\n".join(non_empty_paragraphs[start_index : start_index + window_size]).strip()
-        return excerpt, "Bloc aléatoire sélectionné dans le document Word"
+        candidate_windows: list[tuple[int, str]] = []
+        fallback_windows: list[tuple[int, str]] = []
+
+        for start_index in range(max_start + 1):
+            excerpt = "\n".join(non_empty_paragraphs[start_index : start_index + window_size]).strip()
+            fallback_windows.append((start_index, excerpt))
+            if is_focus_text_usable(excerpt):
+                candidate_windows.append((start_index, excerpt))
+
+        selected_start, excerpt = random.choice(candidate_windows or fallback_windows)
+        return excerpt, f"Bloc sélectionné dans le document Word: paragraphes {selected_start + 1} à {selected_start + window_size}"
 
     raise ValueError("Format de fichier non supporte")
 
@@ -153,12 +215,42 @@ def pick_context(chunks: list[str], index: int) -> str:
     return "\n\n".join(selected)
 
 
+def build_context_candidates(chunks: list[str], question_index: int) -> list[str]:
+    if not chunks:
+        return []
+
+    candidates: list[str] = []
+    seen_contexts: set[str] = set()
+
+    def add_candidate(candidate: str) -> None:
+        normalized = candidate.strip()
+        if not normalized or normalized in seen_contexts:
+            return
+        candidates.append(normalized)
+        seen_contexts.add(normalized)
+
+    add_candidate(pick_context(chunks, question_index))
+
+    for offset in range(len(chunks)):
+        start = (question_index + offset) % len(chunks)
+        add_candidate(chunks[start])
+
+    if len(chunks) > 1:
+        for offset in range(len(chunks)):
+            start = (question_index + offset) % len(chunks)
+            pair = [chunks[start], chunks[(start + 1) % len(chunks)]]
+            add_candidate("\n\n".join(pair))
+
+    return candidates
+
+
 def is_question_acceptable(question: str) -> bool:
     normalized = question.casefold().strip()
     if not normalized:
         return False
 
     banned_fragments = [
+        # Structure du document
         "chapitre",
         "section",
         "page",
@@ -167,6 +259,25 @@ def is_question_acceptable(question: str) -> bool:
         "dans le document",
         "dans ce document",
         "composant de base créé",
+        
+        # Métadonnées & droits
+        "institution",
+        "réservée",
+        "auteur",
+        "droit",
+        "copyright",
+        "propriété",
+        "reproduction",
+        "formation initiale",
+        "édité par",
+        "publié par",
+        "version",
+        
+        # Questions trop vagues
+        "combien de",
+        "nombre de",
+        "liste",
+        "énumérer",
     ]
     return not any(fragment in normalized for fragment in banned_fragments)
 
@@ -218,13 +329,17 @@ def generate_question(chunks: list[str], question_index: int) -> dict[str, Any]:
         for question in st.session_state.get("asked_questions", [])
         if question.strip()
     }
-    llm = get_json_llm()
-    for attempt in range(6):
-        context = pick_context(chunks, question_index + attempt)
+    llm = get_question_llm()
+    previous_questions = [question for question in st.session_state.get("asked_questions", []) if question.strip()]
+    previous_questions_block = "\n".join(f"- {question}" for question in previous_questions[-8:])
+    contexts = build_context_candidates(chunks, question_index)
+
+    for attempt, context in enumerate(contexts[:8], start=1):
         prompt = (
             f"{QUESTION_PROMPT}\n\n"
             f"Question numero : {question_index + 1}\n"
-            f"Tentative : {attempt + 1}\n\n"
+            f"Tentative : {attempt}\n"
+            f"Questions deja posees a eviter :\n{previous_questions_block or '- Aucune'}\n\n"
             f"Contexte documentaire :\n{context}"
         )
         response = llm.invoke(prompt)
@@ -542,212 +657,257 @@ def render_theme() -> None:
 
 def render_sidebar() -> None:
     with st.sidebar:
-        if st.session_state.chunks:
-            return
-
-        st.header("Configuration")
-        st.write(f"Modèle Ollama: {MODEL_NAME}")
-        st.write("Formats acceptés: PDF, DOCX")
-        st.write("Mode de génération: une question à la fois")
-        st.caption(
-            "Assurez-vous qu'Ollama est lancé et que le modèle mistral est disponible localement."
-        )
-
-
-def render_hero() -> None:
-    st.markdown(
-        """
-        <section class="hero-panel">
-            <div class="hero-kicker">Entraînement intelligent</div>
-            <h1 class="hero-title">Transformez un document en session de quiz guidée</h1>
-            <p class="hero-copy">
-                Importez un support PDF ou Word, préparez un lot de questions dès le départ,
-                puis laissez l'application corriger chaque réponse et enchaîner vers la suivante sans attente inutile.
-            </p>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_metrics() -> None:
-    metrics = [
-        ("moteur", f"Ollama / {MODEL_NAME}", "Génération locale des questions et corrections"),
-        ("format", "PDF + DOCX", "Supports de cours, documentation et fiches"),
-        ("rythme", "1 par 1", "Temps de réponse réduit à chaque génération"),
-    ]
-    tiles = []
-    for label, value, note in metrics:
-        tiles.append(
-            f"<div class='metric-tile'><div class='metric-label'>{label}</div><div class='metric-value'>{value}</div><div class='metric-note'>{note}</div></div>"
-        )
-    st.markdown(f"<section class='metric-ribbon'>{''.join(tiles)}</section>", unsafe_allow_html=True)
+        st.markdown("### ⚙️ Configuration")
+        st.info(f"""
+        **Modèle IA:** {MODEL_NAME}
+        
+        **Format:** PDF, DOCX
+        
+        **Mode:** Une question à la fois
+        """)
+        
+        st.markdown("---")
+        st.markdown("### 📚 À propos")
+        st.caption("""
+        Cette application génère des questions intelligentes à partir de vos documents.
+        
+        **Expérience:** quiz interactif avec correction automatique
+        """)
+        
+        st.markdown("---")
+        st.markdown("### 🔗 Ressources")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.link_button("📖 Documentation", "https://github.com/hamzamachnaoui/Ai_quiz_interactif")
+        with col2:
+            st.link_button("🔗 Console API", "https://console.groq.com")
 
 
 def main() -> None:
     st.set_page_config(
-        page_title="Quiz documentaire Ollama",
+        page_title="🧠 Quiz interactif - Générateur de questions",
         page_icon=":material/local_library:",
         layout="wide",
     )
     init_state()
     render_theme()
+    
+    # En-tête principal
+    st.markdown("""
+    <div style='text-align: center; margin-bottom: 2rem;'>
+        <h1 style='font-size: 3em; color: #d85a2d; margin: 0;'>🧠 Quiz interactif</h1>
+        <p style='font-size: 1.2em; color: #666; margin: 0.5rem 0 0 0;'>Générez des questions intelligentes à partir de vos documents</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Sidebar
     render_sidebar()
+    
+    # Affichage principal
     if not st.session_state.chunks:
-        render_hero()
-        render_metrics()
-
-    uploaded_file = None
-    if not st.session_state.chunks:
-        uploaded_file = st.file_uploader(
-            "Importer un document pédagogique",
-            type=["pdf", "docx"],
-            help="Vous pouvez importer une documentation, un cours ou un support de formation.",
-        )
-
-    if uploaded_file is not None:
-        file_bytes = uploaded_file.getvalue()
-        if st.button("Analyser et préparer le quiz", type="primary"):
-            progress_bar = st.progress(0, text="Initialisation du document...")
-            progress_note = st.empty()
-            try:
-                progress_note.caption("Sélection d'un extrait aléatoire du document...")
-                text, source_focus_label = extract_focus_text(uploaded_file.name, file_bytes)
-                progress_bar.progress(20, text="Texte extrait")
-
-                if not text.strip():
-                    st.error("Le document ne contient pas de texte exploitable.")
-                    st.stop()
-
-                progress_note.caption("Découpage du document en segments pédagogiques...")
-                chunks = split_document(text)
-                progress_bar.progress(70, text="Segments préparés")
-
-                progress_note.caption("Génération de la première question...")
-                first_question = generate_question(chunks, 0)
-                progress_bar.progress(100, text="Quiz prêt")
-
-                reset_quiz_state(uploaded_file.name, text, chunks, source_focus_label)
-                set_current_question(first_question)
-                st.success("Le document a été analysé et la première question est prête.")
-            except Exception as exc:
-                st.error(f"Impossible de préparer le quiz: {exc}")
-            finally:
-                progress_note.empty()
-                progress_bar.empty()
-
-    if st.session_state.chunks:
-        st.markdown("<section class='glass-card'>", unsafe_allow_html=True)
-        st.subheader("Document chargé", icon=":material/description:")
-        document_col, batch_col, more_col, reset_col = st.columns([2.0, 1.0, 1.2, 1.0])
-        with document_col:
-            st.write(f"Fichier: {st.session_state.source_name}")
-            if st.session_state.source_focus_label:
-                st.caption(st.session_state.source_focus_label)
-            st.caption(f"Nombre de segments analysés: {len(st.session_state.chunks)}")
-        with batch_col:
-            st.metric(
-                "Question actuelle",
-                st.session_state.question_index + 1,
+        # Section Upload
+        col1, col2 = st.columns([1.5, 1])
+        
+        with col1:
+            st.markdown("### 📄 Étape 1 : Importer votre document")
+            uploaded_file = st.file_uploader(
+                "Sélectionnez un fichier PDF ou DOCX",
+                type=["pdf", "docx"],
+                help="Cours, documentation, support de formation...",
+                key="doc_uploader",
+                label_visibility="collapsed"
             )
-        with more_col:
-            if st.button("Générer la suivante", width="stretch"):
-                try:
-                    with st.spinner("Génération de la prochaine question..."):
-                        st.session_state.question_index += 1
-                        next_question = generate_question(
-                            st.session_state.chunks,
-                            st.session_state.question_index,
-                        )
-                        set_current_question(next_question)
-                        st.session_state.last_correction = None
-                    st.rerun()
-                except Exception as exc:
-                    st.session_state.question_index -= 1
-                    st.error(f"Impossible d'ajouter plus de questions: {exc}")
-        with reset_col:
-            if st.button("Changer de document", width="stretch"):
+            
+            if uploaded_file:
+                st.info(f"✅ Fichier sélectionné: **{uploaded_file.name}**")
+                
+                st.markdown("### 📊 Étape 2 : Traiter le document")
+                if st.button(
+                    "🚀 Lancer l'analyse",
+                    type="primary",
+                    use_container_width=True,
+                    key="analyze_btn"
+                ):
+                    file_bytes = uploaded_file.getvalue()
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    try:
+                        # Extraction
+                        status_text.info("📖 Extraction du contenu...")
+                        progress_bar.progress(25)
+                        text, source_focus_label = extract_focus_text(uploaded_file.name, file_bytes)
+                        
+                        if not text.strip():
+                            st.error("❌ Le document ne contient pas de texte exploitable.")
+                            st.stop()
+                        
+                        # Split
+                        status_text.info("✂️ Segmentation du document...")
+                        progress_bar.progress(50)
+                        chunks = split_document(text)
+                        
+                        # Génération première question
+                        status_text.info("🤖 Génération de la première question...")
+                        progress_bar.progress(75)
+                        first_question = generate_question(chunks, 0)
+                        progress_bar.progress(100)
+                        
+                        # Sauvegarde état
+                        reset_quiz_state(uploaded_file.name, text, chunks, source_focus_label)
+                        set_current_question(first_question)
+                        
+                        status_text.success("✨ Document analysé! Commencez à répondre aux questions.")
+                        st.rerun()
+                        
+                    except Exception as exc:
+                        st.error(f"❌ Erreur: {exc}")
+                    finally:
+                        status_text.empty()
+                        progress_bar.empty()
+        
+        with col2:
+            st.markdown("### 💡 Comment ça marche?")
+            st.markdown("""
+            1. **Importez** un PDF ou DOCX
+            2. **Lancez** l'analyse 
+            3. **Répondez** aux questions générées
+            4. **Obtenez** une correction intelligente
+            
+            **Expérience fluide** ⚡ - analyse et correction intelligentes
+            """)
+    
+    else:
+        # Document chargé - Afficher l'état
+        st.markdown("---")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("📁 Fichier", st.session_state.source_name.split("/")[-1][:20])
+        with col2:
+            st.metric("❓ Question", f"{st.session_state.question_index + 1}")
+        with col3:
+            st.metric("📊 Segments", len(st.session_state.chunks))
+        with col4:
+            if st.button("🔄 Nouveau document", use_container_width=True, key="reset_doc_top"):
                 clear_quiz_state()
                 st.rerun()
-        st.markdown("</section>", unsafe_allow_html=True)
-
-    current_question = st.session_state.current_question
-    if current_question:
-        st.markdown("<section class='glass-card'>", unsafe_allow_html=True)
-        st.subheader(f"Question {st.session_state.question_index + 1}", icon=":material/quiz:")
-        st.markdown(
-            f"""
-            <div class="question-shell">
-                <div class="question-tag">Question active</div>
-                <div class="question-text">{html.escape(current_question['question'])}</div>
+        
+        st.markdown("---")
+        
+        # Afficher la question
+        if st.session_state.current_question:
+            current_question = st.session_state.current_question
+            
+            st.markdown("### ❓ Votre Question")
+            st.markdown(f"""
+            <div style='
+                background: linear-gradient(135deg, #fff5f0 0%, #ffeae3 100%);
+                border-left: 4px solid #d85a2d;
+                padding: 1.5rem;
+                border-radius: 8px;
+                font-size: 1.15em;
+                line-height: 1.6;
+            '>
+            {html.escape(current_question['question'])}
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        with st.form(key=f"answer_form_{st.session_state.question_index}"):
-            user_answer = st.text_area(
-                "Votre réponse",
-                placeholder="Saisissez ici votre réponse...",
-                key=f"user_answer_{st.session_state.question_index}",
-                height=180,
-            )
-            submitted = st.form_submit_button("Corriger la réponse", width="stretch")
-
-        if submitted:
-            if not user_answer.strip():
-                st.warning("Veuillez saisir une réponse avant la correction.")
-            else:
-                with st.spinner("Correction en cours..."):
-                    try:
-                        st.session_state.last_correction = correct_answer(
-                            st.session_state.chunks,
-                            current_question["question"],
-                            current_question["answer"],
-                            user_answer,
-                            st.session_state.question_index,
-                        )
-                    except Exception as exc:
-                        st.error(f"Impossible de corriger la réponse: {exc}")
-        st.markdown("</section>", unsafe_allow_html=True)
-
-    if st.session_state.last_correction:
-        correction = st.session_state.last_correction
-        st.markdown("<section class='glass-card'>", unsafe_allow_html=True)
-        st.subheader("Correction", icon=":material/fact_check:")
-
-        score = int(correction.get("score", 0))
-        is_correct = bool(correction.get("is_correct", False))
-
-        if is_correct:
-            st.success(f"Bonne réponse. Score: {score}/10")
-        else:
-            st.error(f"Réponse à améliorer. Score: {score}/10")
-
-        st.write("Retour pédagogique")
-        st.write(correction.get("feedback", ""))
-
-        st.write("Réponse exacte")
-        st.write(correction.get("correct_answer", ""))
-
-        st.write("Explication")
-        st.write(correction.get("explanation", ""))
-
-        if st.button("Passer à une autre question", width="stretch"):
-            try:
-                with st.spinner("Génération de la prochaine question..."):
-                    st.session_state.question_index += 1
-                    next_question = generate_question(
-                        st.session_state.chunks,
-                        st.session_state.question_index,
+            """, unsafe_allow_html=True)
+            
+            st.markdown("### 💬 Saisissez votre réponse")
+            
+            with st.form(key=f"answer_form_{st.session_state.question_index}"):
+                user_answer = st.text_area(
+                    "Votre réponse",
+                    placeholder="Écrivez votre réponse ici...",
+                    height=120,
+                    label_visibility="collapsed",
+                    key=f"user_answer_{st.session_state.question_index}",
+                )
+                
+                col1, col2, col3 = st.columns([2, 1, 1])
+                with col1:
+                    submitted = st.form_submit_button(
+                        "✅ Soumettre et obtenir la correction",
+                        type="primary",
+                        use_container_width=True
                     )
-                    set_current_question(next_question)
-                st.session_state.last_correction = None
-                st.rerun()
-            except Exception as exc:
-                st.session_state.question_index -= 1
-                st.error(f"Impossible de passer à la question suivante: {exc}")
-        st.markdown("</section>", unsafe_allow_html=True)
+                with col2:
+                    if st.form_submit_button("⏭️ Passer (sans corriger)", use_container_width=True, key=f"skip_q{st.session_state.question_index}"):
+                        try:
+                            with st.spinner("Génération nouvelle question..."):
+                                st.session_state.question_index += 1
+                                next_question = generate_question(
+                                    st.session_state.chunks,
+                                    st.session_state.question_index,
+                                )
+                                set_current_question(next_question)
+                                st.session_state.last_correction = None
+                            st.rerun()
+                        except Exception as exc:
+                            st.session_state.question_index -= 1
+                            st.error(f"❌ Erreur: {exc}")
+            
+                if submitted:
+                    if not user_answer.strip():
+                        st.warning("⚠️ Veuillez saisir une réponse!")
+                    else:
+                        with st.spinner("🤔 Correction en cours..."):
+                            try:
+                                st.session_state.last_correction = correct_answer(
+                                    st.session_state.chunks,
+                                    current_question["question"],
+                                    current_question["answer"],
+                                    user_answer,
+                                    st.session_state.question_index,
+                                )
+                            except Exception as exc:
+                                st.error(f"❌ Erreur de correction: {exc}")
+        
+        # Afficher la correction
+        if st.session_state.last_correction:
+            correction = st.session_state.last_correction
+            score = int(correction.get("score", 0))
+            is_correct = bool(correction.get("is_correct", False))
+            
+            st.markdown("---")
+            st.markdown("### 📋 Correction")
+            
+            if is_correct:
+                st.success(f"✅ **Bonne réponse!** Score: {score}/10")
+            else:
+                st.warning(f"⚠️ **À améliorer.** Score: {score}/10")
+            
+            with st.expander("💡 Détails de la correction", expanded=True):
+                st.markdown("**Votre retour:**")
+                st.info(correction.get("feedback", ""))
+                
+                st.markdown("**Réponse correcte:**")
+                st.success(correction.get("correct_answer", ""))
+                
+                st.markdown("**Explication:**")
+                st.info(correction.get("explanation", ""))
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("⏭️ Question suivante", type="primary", use_container_width=True, key=f"next_q_after_correction_{st.session_state.question_index}"):
+                    try:
+                        with st.spinner("Génération nouvelle question..."):
+                            st.session_state.question_index += 1
+                            next_question = generate_question(
+                                st.session_state.chunks,
+                                st.session_state.question_index,
+                            )
+                            set_current_question(next_question)
+                            st.session_state.last_correction = None
+                        st.rerun()
+                    except Exception as exc:
+                        st.session_state.question_index -= 1
+                        st.error(f"❌ Erreur: {exc}")
+            
+            with col2:
+                if st.button("🔄 Nouveau document", use_container_width=True, key=f"reset_doc_after_correction_{st.session_state.question_index}"):
+                    clear_quiz_state()
+                    st.rerun()
 
 
 if __name__ == "__main__":

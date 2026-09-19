@@ -48,7 +48,7 @@ L'application est une interface web Streamlit qui permet de générer et corrige
 │                    LLM Integration Layer                         │
 │                                                                  │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │ LangChain + ChatOllama (Direct Connection)               │  │
+│  │ LangChain + fournisseur LLM distant                      │  │
 │  │ - JSON Mode pour réponses structurées                    │  │
 │  │ - Temperature control (0.2 general, 0.1 JSON)           │  │
 │  └──────────────────────────────────────────────────────────┘  │
@@ -56,10 +56,10 @@ L'application est une interface web Streamlit qui permet de générer et corrige
             │
             ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Ollama (Local LLM Engine)                     │
+│                    Service LLM externe                           │
 │                                                                  │
-│  Modèle: Mistral (configuré par défaut)                         │
-│  Port: 11434 (par défaut)                                       │
+│  Modèle: configurable via variable d'environnement              │
+│  Accès: via clé API                                              │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -120,7 +120,7 @@ generate_question()
 Prompt + Contexte
         │
         ▼
-get_json_llm() → ChatOllama (temperature=0.1, format="json")
+get_json_llm() → client LLM JSON (temperature=0.1)
         │
         ▼
 LLM Response (JSON)
@@ -157,7 +157,7 @@ correct_answer()
 Correction Prompt + Contexte
         │
         ▼
-get_json_llm() → ChatOllama (temperature=0.1, format="json")
+get_json_llm() → client LLM JSON (temperature=0.1)
         │
         ▼
 LLM Response: {is_correct, score, feedback, correct_answer, explanation}
@@ -220,8 +220,8 @@ Configure :
 ### `.env.example`
 
 Variables d'environnement optionnelles :
-- `OLLAMA_BASE_URL`: Adresse du serveur Ollama
-- `OLLAMA_MODEL`: Modèle à utiliser
+- `GROQ_API_KEY`: Clé API du fournisseur LLM
+- `GROQ_MODEL`: Modèle à utiliser
 - `STREAMLIT_PORT`: Port Streamlit
 
 ## Points de performance
@@ -231,7 +231,7 @@ Variables d'environnement optionnelles :
 1. **Extrait aléatoire** : Une page PDF au lieu du document entier
 2. **Chunks limités** : 2 chunks maximum pour contexte (au lieu de 4+)
 3. **Caching agressif** : Réutilisation du texte et splits extraits
-4. **JSON mode** : Ollama force du JSON valide (pas de parsing approximatif)
+4. **JSON mode** : Le client LLM force un format structuré exploitable
 5. **Température basse** : 0.1 pour JSON (meilleure cohérence)
 6. **Retry intelligente** : Si question rejetée, régénère (pas re-requête entière)
 
@@ -247,7 +247,7 @@ Variables d'environnement optionnelles :
 |--------|------|---------|
 | streamlit | UI & orchestration | Latest |
 | langchain | LLM orchestration | Latest |
-| langchain-ollama | Ollama integration | Latest |
+| langchain-groq | LLM API integration | Latest |
 | pypdf | PDF parsing | Latest |
 | python-docx | DOCX parsing | Latest |
 | langchain-text-splitters | Text chunking | Latest |
@@ -273,8 +273,8 @@ def extract_epub(file_bytes: bytes) -> str:
 Modifi `get_json_llm()` ou créer `get_custom_llm()`:
 
 ```python
-def get_custom_llm() -> ChatOllama:
-    return ChatOllama(model="neural-chat", temperature=0.1, format="json")
+def get_custom_llm() -> ChatGroq:
+        return ChatGroq(model="mixtral-8x7b-32768", temperature=0.1)
 ```
 
 ### Support de plusieurs utilisateurs

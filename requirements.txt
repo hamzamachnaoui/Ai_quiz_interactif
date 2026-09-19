@@ -1,8 +1,9 @@
 streamlit
 langchain
 langchain-community
-langchain-ollama
+langchain-groq
 langchain-text-splitters
 pypdf
 python-docx
 docx2txt
+python-dotenv
