@@ -9,6 +9,8 @@
 
 Transformez vos documents en quiz pédagogique interactif avec correction automatique et feedback intelligent.
 
+### 🚀 [Essayez l'application en ligne →](https://aiquizinteractif-yixus6eyaappmvfcdgvrvs9.streamlit.app/)
+
 ---
 
 ## Vue d'ensemble
@@ -271,4 +273,4 @@ Besoin d'aide ?
 
 **Fait avec ❤️ pour les étudiants et les formateurs**
 
-[⭐ Star le projet](https://github.com/hamzamachnaoui/Ai_quiz_interactif) | [📧 Nous contacter](mailto:hamza@example.com) | [🔗 Portfolio](https://github.com/hamzamachnaoui)
+[🚀 Essayez l'app en ligne](https://aiquizinteractif-yixus6eyaappmvfcdgvrvs9.streamlit.app/) | [⭐ Star le projet](https://github.com/hamzamachnaoui/Ai_quiz_interactif) | [📧 Nous contacter](mailto:hamza@example.com) | [🔗 Portfolio](https://github.com/hamzamachnaoui)
